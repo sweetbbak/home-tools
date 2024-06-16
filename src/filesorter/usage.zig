@@ -24,7 +24,7 @@ pub fn GetHelp() void {
         \\ {s}
         \\    -h, --help       show this help message
         \\    -d, --directory  directory to sort
-        \\    -D, --dry-run    print changes to stdout instead of moving any files
+        \\    -D, --dry    print changes to stdout instead of moving any files
         \\
     ;
 

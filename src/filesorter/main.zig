@@ -6,6 +6,8 @@ const Usage = @import("usage.zig");
 
 const clap = @import("clap");
 
+var DRYRUN: bool = false;
+
 pub const Filetype = enum {
     IMAGE,
     VIDEO,
@@ -134,24 +136,47 @@ fn sortDir(dir: []const u8) !void {
 
     const stdout = bw.writer();
     _ = try stdout.print(
-        "#!/usr/bin/env bash\n#auto-generated script to clean up a directory\n",
+        "#!/usr/bin/env bash\n#auto-generated script to clean up a directory\n\n",
         .{},
     );
+
+    if (DRYRUN) {
+        _ = try stdout.print(
+            "DRYRUN=true\n",
+            .{},
+        );
+    } else {
+        _ = try stdout.print(
+            "DRYRUN=false\n",
+            .{},
+        );
+    }
 
     const movefunc =
         \\
         \\function _mv() {
-        \\  fpath="$(printf '%q' "$1")"
-        \\  if [ -f "$fpath" ]; then
-        \\      mv "$fpath" "$2"
-        \\  else
-        \\      echo -e "path \x1b[33m[%s]\x1b[0m is mangled"
-        \\  fi
-        \\}
+        \\    fpath="$(printf "%s" "$1")"
+        \\    if [ -f "$fpath" ]; then
+        \\        if [[ "$DRYRUN" = true ]]; then
+        \\            printf "mv [\x1b[32m%s\x1b[0m] [\x1b[36m%s\x1b[0m]\n" "$fpath" "$2"
+        \\        else
+        \\            mkdir -p "$2"
+        \\            mv -i "$fpath" "$2"
+        \\            exitcode=$?
         \\
+        \\            if [ "$exitcode" -ne 0 ]; then
+        \\                printf "\x1b[31m\x1b[4mfailed:\x1b[0m mv [\x1b[32m%s\x1b[0m] [\x1b[36m%s\x1b[0m]\n" "$fpath" "$2"
+        \\            else
+        \\                printf "mv [\x1b[32m%s\x1b[0m] [\x1b[36m%s\x1b[0m]\n" "$fpath" "$2"
+        \\            fi
+        \\        fi
+        \\    else
+        \\        printf "path \x1b[33m[%s]\x1b[0m is mangled\n" "$fpath"
+        \\    fi
+        \\}
     ;
     _ = try stdout.print(
-        "{s}",
+        "{s}\n\n",
         .{movefunc},
     );
 
@@ -160,6 +185,7 @@ fn sortDir(dir: []const u8) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
+
     var walker = try tdir.walk(alloc);
     defer walker.deinit();
 
@@ -173,6 +199,7 @@ fn sortDir(dir: []const u8) !void {
         if (depth > 1) {
             continue;
         }
+
         if (entry.kind == std.fs.Dir.Entry.Kind.directory) {
             continue;
         }
@@ -180,6 +207,7 @@ fn sortDir(dir: []const u8) !void {
         const extConst = std.fs.path.extension(entry.path);
         const ext = alloc.alloc(u8, extConst.len) catch unreachable;
         defer alloc.free(ext);
+
         _ = std.ascii.lowerString(ext, extConst);
 
         if (!Filetype.string_map.has(ext)) {
@@ -194,7 +222,6 @@ fn sortDir(dir: []const u8) !void {
 
         _ = std.ascii.lowerString(dest, taglower);
 
-        // _ = try stdout.print("_mv '{s}/{s}' {s}/{s}\n", .{ dir, entry.path, dir, @tagName(ftenum.?) });
         _ = try stdout.print("_mv '{s}/{s}' {s}/{s}\n", .{ dir, entry.path, dir, dest });
         try bw.flush();
 
@@ -221,8 +248,8 @@ pub fn main() !void {
     // We can use `parseParamsComptime` to parse a string into an array of `Param(Help)`
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
+        \\-D, --dry              print changes to stdout
         \\-d, --directory <str>  a directory to parse and sort
-        \\-D, --dry-run          print changes to stdout
         \\<str>...
         \\
     );
@@ -244,6 +271,10 @@ pub fn main() !void {
     if (res.args.help != 0) {
         printHelp();
         std.posix.exit(0);
+    }
+
+    if (res.args.dry != 0) {
+        DRYRUN = true;
     }
 
     if (res.args.directory) |dir| {
